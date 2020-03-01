@@ -8,8 +8,8 @@ You'll need [Python 3](https://www.python.org/download/releases/3.0/) and [Anaco
 Before doing anything else, clone this repository and enter it:
 
 ```shell
-git clone https://github.com/sonyc-project/urban-sound-tagging-baseline.git
-cd urban-sound-tagging-baseline
+git clone https://github.com/sonyc-project/dcase2020task5-uststc-baseline
+cd dcase2020task5-uststc-baseline
 ```
 
 ### Quick Start
