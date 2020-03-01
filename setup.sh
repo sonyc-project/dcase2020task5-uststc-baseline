@@ -10,10 +10,10 @@ yes | pip install -r requirements.txt
 # Download dataset
 mkdir -p $SONYC_UST_PATH/data
 pushd $SONYC_UST_PATH/data
-wget https://zenodo.org/record/2590742/files/annotations.csv
-wget https://zenodo.org/record/2590742/files/audio.tar.gz
-wget https://zenodo.org/record/2590742/files/dcase-ust-taxonomy.yaml
-wget https://zenodo.org/record/2590742/files/README.md
+wget https://zenodo.org/record//files/annotations.csv
+wget https://zenodo.org/record//files/audio.tar.gz
+wget https://zenodo.org/record//files/dcase-ust-taxonomy.yaml
+wget https://zenodo.org/record//files/README.md
 
 # Decompress audio
 tar xf audio.tar.gz
