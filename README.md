@@ -119,23 +119,16 @@ python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_coarse/*/output_m
 
 ## Baseline Description
 
-For the baseline model, we simply use a multi-label logistic regression model. In other words, we use a single [binary logistic regression]() model for each tag. Because of the size of the dataset, we opted for a simple and shallow model for our baseline. Our model took VGGish embeddings as its input representation, which by default uses a window size and hop size of 0.96 seconds, giving us ten 128-dimensional embeddings for each clip in our dataset. We use the weak tags for each audio clip as the targets for each clip. For the training data (which has no verified target), we simply count a positive for a tag if at least one annotator has labeled the audio clip with that tag.
-
-We trained the model using stochastic gradient descent (using the [Adam optimizer](http://ruder.io/optimizing-gradient-descent/index.html#adam)) to minimize [binary cross-entropy](https://ml-cheatsheet.readthedocs.io/en/latest/loss_functions.html#cross-entropy) loss. We use [early stopping](https://machinelearningmastery.com/early-stopping-to-avoid-overtraining-neural-network-models/) using loss on the validation set to mitigate overfitting.
-
-For training models to predict tags at the fine level, the loss is modified such that if "unknown/other" is annotated for a particular coarse tag, the loss for the fine tags corresponding to this coarse tag are masked out. This is done because we do not know which of the corresponding fine tags may or may not be active; "unknown/other" implies that any of the corresponding fine tags may or may not be active. However, we still want to use these examples to train the model on fine tags in other coarse categories for which we do have certainty. 
-
-For inference, we predict tags at the frame level and simply take the average of output tag probabilities as the clip-level tag probabilities.
-
-
 For the baseline model, we use a multi-label [logistic regression](https://towardsdatascience.com/logistic-regression-detailed-overview-46c4da4303bc) model, using [AutoPool](https://github.com/marl/autopool) to aggregate frame level predictions.  The model takes in as input:
  * Audio content, via OpenL3 embeddings (`content_type="env"`, `input_repr="mel256"`, and `embedding_size=512`), using a window size and hop size of 1.0 second, giving us ten 512-dimensional embeddings for each clip in our dataset.
  * Spatial context, via latitude and longitude values, giving us 2 values for each clip in our dataset.
  * Temporal context, via hour of the day, day of the week, and week of the year, each encoded as a one hot vector, giving us 24 + 7 + 52 = 83 values for each clip in our dataset.
+ 
 We Z-score normalize the embeddings, latitude, and longitude values, and concatenate all of the inputs (at each time step), resulting in an input size of 512 + 2 + 83 = 597.
+
 We use the weak tags for each audio clip as the targets for each clip. For the `train` data (which has no verified target), we count a positive for a tag if at least one annotator has labeled the audio clip with that tag (i.e. minority vote).
-We train the model using stochastic gradient descent to minimize binary cross-entropy loss. For training models to predict tags at the fine level, we modify the loss such that if "unknown/other" is annotated for a particular coarse tag, the loss for the fine tags corresponding to this coarse tag are masked out. We use early stopping using loss on the `validate` set to mitigate overfitting.
-We train one model to predict fine-level tags, with coarse-level tag predictions obtained by taking the maximum probability over fine-tags predictions within a coarse category. We train another model only to predict coarse-level tags.
+
+We train the model using stochastic gradient descent to minimize binary cross-entropy loss. For training models to predict tags at the fine level, we modify the loss such that if "unknown/other" is annotated for a particular coarse tag, the loss for the fine tags corresponding to this coarse tag are masked out. We use early stopping using loss on the `validate` set to mitigate overfitting. We train one model to predict fine-level tags, with coarse-level tag predictions obtained by taking the maximum probability over fine-tags predictions within a coarse category. We train another model only to predict coarse-level tags.
 
 
 ## Metrics Description
