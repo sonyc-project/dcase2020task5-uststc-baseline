@@ -44,9 +44,8 @@ def load_embeddings(file_list, emb_dir):
     """
     embeddings = []
     for idx, filename in enumerate(file_list):
-        emb_path = os.path.join(emb_dir, os.path.splitext(filename)[0] + '.npy.gz')
-        with gzip.open(emb_path, 'rb') as f:
-            embeddings.append(np.load(f)['embeddings'])
+        emb_path = os.path.join(emb_dir, os.path.splitext(filename)[0] + '.npz')
+        embeddings.append(np.load(emb_path)['embedding'])
 
     return embeddings
 
@@ -71,13 +70,17 @@ def get_subset_split(annotation_data):
 
     train_idxs = []
     valid_idxs = []
+    test_idxs = []
+
     for idx, (_, row) in enumerate(data.iterrows()):
         if row['split'] == 'train':
             train_idxs.append(idx)
-        else:
+        elif row['split'] == 'validate':
             valid_idxs.append(idx)
+        elif row['split'] == 'test':
+            test_idxs.append(idx)
 
-    return np.array(train_idxs), np.array(valid_idxs)
+    return np.array(train_idxs), np.array(valid_idxs), np.array(test_idxs)
 
 
 def get_file_targets(annotation_data, labels):
@@ -91,35 +94,32 @@ def get_file_targets(annotation_data, labels):
 
     Returns
     -------
-    target_list
+    targets
 
     """
-    target_list = []
     file_list = annotation_data['audio_filename'].unique().tolist()
+    count_dict = {fname: {label: 0 for label in labels} for fname in file_list}
 
-    for filename in file_list:
-        file_df = annotation_data[annotation_data['audio_filename'] == filename]
-        target = []
+    for _, row in annotation_data.iterrows():
+        fname = row['audio_filename']
+        split = row['split']
+        ann_id = row['annotator_id']
+
+        # For training set, only use crowdsourced annotations
+        if split == "train" and ann_id <= 0:
+            continue
+
+        # For validate and test sets, only use the verified annotation
+        if split != "train" and ann_id != 0:
+            continue
 
         for label in labels:
-            count = 0
+            count_dict[fname][label] += row[label + '_presence']
 
-            for _, row in file_df.iterrows():
-                if int(row['annotator_id']) == 0:
-                    # If we have a validated annotation, just use that
-                    count = row[label + '_presence']
-                    break
-                else:
-                    count += row[label + '_presence']
+    targets = np.array([[1.0 if count_dict[fname][label] > 0 else 0.0 for label in labels]
+                        for fname in file_list])
 
-            if count > 0:
-                target.append(1.0)
-            else:
-                target.append(0.0)
-
-        target_list.append(target)
-
-    return np.array(target_list)
+    return targets
 
 
 def softmax(X, theta=1.0, axis=None):
@@ -171,14 +171,14 @@ def softmax(X, theta=1.0, axis=None):
 ## MODEL CONSTRUCTION
 
 
-def construct_mlp(num_frames, emb_size, num_classes,
+def construct_mlp(num_frames, input_size, num_classes,
                   hidden_layer_size=128, num_hidden_layers=0, l2_reg=1e-5):
     """
     Construct a 2-hidden-layer MLP model for MIL processing
     Parameters
     ----------
     num_frames
-    emb_size
+    input_size
     num_classes
     hidden_layer_size
     num_hidden_layers
@@ -188,7 +188,6 @@ def construct_mlp(num_frames, emb_size, num_classes,
     model
     """
     # Input layer
-    input_size = emb_size + 2 + NUM_WEEKS + NUM_DAYS + NUM_HOURS
     inp = Input(shape=(num_frames, input_size), dtype='float32', name='input')
     y = inp
 
@@ -257,11 +256,11 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
 
     num_frames = X_train_emb.shape[1]
 
-    X_train_loc = np.array([[latitude_list[idx],
-                             longitude_list[idx]] * num_frames
+    X_train_loc = np.array([[[latitude_list[idx],
+                             longitude_list[idx]]] * num_frames
                             for idx in train_file_idxs])
-    X_valid_loc = np.array([[latitude_list[idx],
-                             longitude_list[idx]] * num_frames
+    X_valid_loc = np.array([[[latitude_list[idx],
+                             longitude_list[idx]]] * num_frames
                             for idx in valid_file_idxs])
 
     X_train_time = np.array([
@@ -425,7 +424,7 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
     # For fine, we include incomplete labels in targets for computing the loss
     fine_target_list = get_file_targets(annotation_data, full_fine_target_labels)
     coarse_target_list = get_file_targets(annotation_data, coarse_target_labels)
-    train_file_idxs, test_file_idxs = get_subset_split(annotation_data)
+    train_file_idxs, valid_file_idxs, _ = get_subset_split(annotation_data)
 
     if label_mode == "fine":
         target_list = fine_target_list
@@ -440,21 +439,16 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
 
     embeddings = load_embeddings(file_list, emb_dir)
 
-    X_train, y_train, X_valid, y_valid, scaler, pca_model \
-        = prepare_data(train_file_idxs, test_file_idxs, embeddings,
+    X_train, y_train, X_valid, y_valid, scaler \
+        = prepare_data(train_file_idxs, valid_file_idxs, embeddings,
                        latitude_list, longitude_list,
                        week_list, day_list, hour_list,
                        target_list, standardize=standardize)
 
-    if scaler is not None:
-        scaler_path = os.path.join(output_dir, 'stdizer.pkl')
-        with open(scaler_path, 'wb') as f:
-            pk.dump(scaler, f)
-
-    _, num_frames, emb_size = X_train.shape
+    _, num_frames, input_size = X_train.shape
 
     model = construct_mlp(num_frames,
-                          emb_size,
+                          input_size,
                           num_classes,
                           num_hidden_layers=num_hidden_layers,
                           hidden_layer_size=hidden_layer_size,
@@ -464,6 +458,11 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
     results_dir = os.path.join(output_dir, exp_id, timestamp)
+
+    if scaler is not None:
+        scaler_path = os.path.join(results_dir, 'stdizer.pkl')
+        with open(scaler_path, 'wb') as f:
+            pk.dump(scaler, f)
 
     if label_mode == "fine":
         full_coarse_to_fine_terminal_idxs = np.cumsum(
@@ -535,16 +534,16 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
 
     print("* Saving model predictions.")
     results = {}
-    results['train'] = predict(embeddings, train_file_idxs, model, scaler=scaler)
-    results['test'] = predict(embeddings, test_file_idxs, model, scaler=scaler)
+    results['train'] = model.predict(X_train).tolist()
+    results['validate'] = model.predict(X_valid).tolist()
     results['train_history'] = history.history
 
     results_path = os.path.join(results_dir, "results.json")
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    generate_output_file(results['test'], test_file_idxs, output_dir, file_list,
-                         "", label_mode, taxonomy)
+    generate_output_file(results['validate'], valid_file_idxs, results_dir,
+                         file_list, label_mode, taxonomy)
 
 
 ## MODEL EVALUATION
@@ -555,7 +554,7 @@ def predict(embeddings, file_idxs, model, scaler=None):
     Parameters
     ----------
     embeddings
-    test_file_idxs
+    file_idxs
     model
     scaler
     pca_model
@@ -573,8 +572,7 @@ def predict(embeddings, file_idxs, model, scaler=None):
     return pred.tolist()
 
 
-def generate_output_file(y_pred, file_idxs, results_dir, file_list,
-                         aggregation_type, label_mode, taxonomy):
+def generate_output_file(y_pred, file_idxs, results_dir, file_list, label_mode, taxonomy):
     """
     Write the output file containing model predictions
 
@@ -584,7 +582,6 @@ def generate_output_file(y_pred, file_idxs, results_dir, file_list,
     file_idxs
     results_dir
     file_list
-    aggregation_type
     label_mode
     taxonomy
 
@@ -592,7 +589,7 @@ def generate_output_file(y_pred, file_idxs, results_dir, file_list,
     -------
 
     """
-    output_path = os.path.join(results_dir, "output_{}.csv".format(aggregation_type))
+    output_path = os.path.join(results_dir, "output.csv")
     file_list = [file_list[idx] for idx in file_idxs]
 
     coarse_fine_labels = [["{}-{}_{}".format(coarse_id, fine_id, fine_label)
