@@ -40,14 +40,14 @@ source activate sonyc-ust-stc
 pip install -r requirements.txt
 ```
 
-Now, download the dataset from [Zenodo](https://zenodo.org/record/2590742) and decompress the audio files:
+Now, download the dataset from [Zenodo](https://zenodo.org/record/3693077) and decompress the audio files:
 ```shell
 mkdir -p $SONYC_UST_PATH/data
 pushd $SONYC_UST_PATH/data
-wget https://zenodo.org/record//files/annotations.csv
-wget https://zenodo.org/record//files/audio.tar.gz
-wget https://zenodo.org/record//files/dcase-ust-taxonomy.yaml
-wget https://zenodo.org/record//files/README.md
+wget https://zenodo.org/record/3693077/files/annotations.csv
+wget https://zenodo.org/record/3693077/files/audio.tar.gz
+wget https://zenodo.org/record/3693077/files/dcase-ust-taxonomy.yaml
+wget https://zenodo.org/record/3693077/files/README.md
 tar xf audio.tar.gz
 rm audio.tar.gz
 popd
