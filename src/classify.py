@@ -66,21 +66,22 @@ def get_subset_split(annotation_data):
     """
 
     # Get the audio filenames and the splits without duplicates
-    data = annotation_data[['split', 'audio_filename']].drop_duplicates().sort_values('audio_filename')
+    data = annotation_data[['split', 'audio_filename', 'annotator_id']]\
+                          .groupby(by=['split', 'audio_filename'], as_index=False)\
+                          .min()\
+                          .sort_values('audio_filename')
 
     train_idxs = []
     valid_idxs = []
-    test_idxs = []
 
     for idx, (_, row) in enumerate(data.iterrows()):
         if row['split'] == 'train':
             train_idxs.append(idx)
-        elif row['split'] == 'validate':
+        elif row['split'] == 'validate' and row['annotator_id'] <= 0:
+            # For validation examples, only use verified annotations
             valid_idxs.append(idx)
-        elif row['split'] == 'test':
-            test_idxs.append(idx)
 
-    return np.array(train_idxs), np.array(valid_idxs), np.array(test_idxs)
+    return np.array(train_idxs), np.array(valid_idxs)
 
 
 def get_file_targets(annotation_data, labels):
@@ -424,7 +425,7 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
     # For fine, we include incomplete labels in targets for computing the loss
     fine_target_list = get_file_targets(annotation_data, full_fine_target_labels)
     coarse_target_list = get_file_targets(annotation_data, coarse_target_labels)
-    train_file_idxs, valid_file_idxs, _ = get_subset_split(annotation_data)
+    train_file_idxs, valid_file_idxs = get_subset_split(annotation_data)
 
     if label_mode == "fine":
         target_list = fine_target_list
@@ -544,32 +545,6 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
 
     generate_output_file(results['validate'], valid_file_idxs, results_dir,
                          file_list, label_mode, taxonomy)
-
-
-## MODEL EVALUATION
-
-def predict(embeddings, file_idxs, model, scaler=None):
-    """
-    Evaluate the output of a MIL classification model.
-    Parameters
-    ----------
-    embeddings
-    file_idxs
-    model
-    scaler
-    pca_model
-    Returns
-    -------
-    results
-    """
-    if scaler is None:
-        X = np.array([embeddings[idx] for idx in file_idxs])
-    else:
-        X = np.array([scaler.transform(embeddings[idx]) for idx in file_idxs])
-
-    pred = model.predict(X)
-
-    return pred.tolist()
 
 
 def generate_output_file(y_pred, file_idxs, results_dir, file_list, label_mode, taxonomy):
