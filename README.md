@@ -96,30 +96,30 @@ openl3 audio $SONYC_UST_PATH/data/audio --output-dir $SONYC_UST_PATH/features --
 Now, train a fine-level model and produce predictions:
 
 ```shell
-python classify.py $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml $SONYC_UST_PATH/features/vggish $SONYC_UST_PATH/output baseline_fine --label_mode fine
+python classify.py $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml $SONYC_UST_PATH/embeddings $SONYC_UST_PATH/output baseline_fine --label_mode fine
 ```
 
 Evaluate the fine-level model output file (using frame-averaged clip predictions) on AUPRC:
 
 ```shell
-python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_fine/*/output_mean.csv $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml
+python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_fine/*/output.csv $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml
 ```
 
 Now, train a coarse-level model and produce predictions:
 
 ```shell
-python classify.py $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml $SONYC_UST_PATH/features/vggish $SONYC_UST_PATH/output baseline_coarse --label_mode coarse
+python classify.py $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml $SONYC_UST_PATH/embeddings $SONYC_UST_PATH/output baseline_coarse --label_mode coarse
 ```
 
 Evaluate the coarse-level model output file (using frame-averaged clip predictions) on AUPRC:
 
 ```shell
-python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_coarse/*/output_mean.csv $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml
+python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_coarse/*/output.csv $SONYC_UST_PATH/data/annotations.csv $SONYC_UST_PATH/data/dcase-ust-taxonomy.yaml
 ```
 
 ## Baseline Description
 
-For the baseline model, we use a multi-label [logistic regression](https://towardsdatascience.com/logistic-regression-detailed-overview-46c4da4303bc) model, using [AutoPool](https://github.com/marl/autopool) to aggregate frame level predictions.  The model takes in as input:
+For the baseline model, we use a multi-label multi-layer perceptron model, using a single hidden layer of size 128 (with ReLU non-linearities), and using [AutoPool](https://github.com/marl/autopool) to aggregate frame level predictions.  The model takes in as input:
  * Audio content, via OpenL3 embeddings (`content_type="env"`, `input_repr="mel256"`, and `embedding_size=512`), using a window size and hop size of 1.0 second, giving us ten 512-dimensional embeddings for each clip in our dataset.
  * Spatial context, via latitude and longitude values, giving us 2 values for each clip in our dataset.
  * Temporal context, via hour of the day, day of the week, and week of the year, each encoded as a one hot vector, giving us 24 + 7 + 52 = 83 values for each clip in our dataset.
@@ -162,59 +162,59 @@ As a secondary metric, we report the micro-averaged F-score of the system, after
 
 #### Fine-level evaluation:
 
-* Micro AUPRC: 
-* Micro F1-score (@0.5): 
-* Macro AUPRC: 
+* Micro AUPRC: 0.7329
+* Micro F1-score (@0.5): 0.6149
+* Macro AUPRC: 0.5278
 * Coarse Tag AUPRC:
                                                          
     | Coarse Tag Name | AUPRC |
     | :--- | :--- |
-    | engine |  |
-    | machinery-impact |  |
-    | non-machinery-impact |  |
-    | powered-saw |  |
-    | alert-signal |  |
-    | music |  |
-    | human-voice |  |
-    | dog |  |
+    | engine | 0.6429 |
+    | machinery-impact | 0.5098 |
+    | non-machinery-impact | 0.4474 |
+    | powered-saw | 0.5194 |
+    | alert-signal | 0.8238 |
+    | music | 0.3151 |
+    | human-voice | 0.9073 |
+    | dog | 0.0568 |
 
 #### Coarse-level evaluation:
 
-* Micro AUPRC: 
-* Micro F1-score (@0.5): 
-* Macro AUPRC: 
+* Micro AUPRC: 0.8391
+* Micro F1-score (@0.5): 0.6736
+* Macro AUPRC: 0.6370
 
 * Coarse Tag AUPRC:                                      
                                                          
     | Coarse Tag Name | AUPRC |
     | :--- | :--- |
-    | engine |  |
-    | machinery-impact |  |
-    | non-machinery-impact |  |
-    | powered-saw |  |
-    | alert-signal |  |
-    | music |  |
-    | human-voice |  |
-    | dog |  |
+    | engine | 0.8191 |
+    | machinery-impact | 0.6502 |
+    | non-machinery-impact | 0.4474 |
+    | powered-saw | 0.7960 |
+    | alert-signal | 0.8837 |
+    | music | 0.4720 |
+    | human-voice | 0.9711 |
+    | dog | 0.0568 |
 
 ### Coarse-level model
 
 #### Coarse-level evaluation:
-* Micro AUPRC: 
-* Micro F1-score (@0.5): 
-* Macro AUPRC: 
+* Micro AUPRC: 0.8352
+* Micro F1-score (@0.5): 0.7389
+* Macro AUPRC: 0.6323
 * Coarse Tag AUPRC:
                                                          
     | Coarse Tag Name | AUPRC |
     | :--- | :--- |
-    | engine |  |
-    | machinery-impact |  |
-    | non-machinery-impact |  |
-    | powered-saw |  |
-    | alert-signal |  |
-    | music |  |
-    | human-voice |  |            
-    | dog |  |
+    | engine | 0.8500 |
+    | machinery-impact | 0.6021 |
+    | non-machinery-impact | 0.4192 |
+    | powered-saw | 0.7200 |
+    | alert-signal | 0.8518 |
+    | music | 0.6145 |
+    | human-voice | 0.9593 |            
+    | dog | 0.0463 |
 
 ### Appendix: taxonomy of SONYC urban sound tags
 
