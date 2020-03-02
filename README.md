@@ -120,7 +120,7 @@ python evaluate_predictions.py $SONYC_UST_PATH/output/baseline_coarse/*/output.c
 ## Baseline Description
 
 For the baseline model, we use a multi-label multi-layer perceptron model, using a single hidden layer of size 128 (with ReLU non-linearities), and using [AutoPool](https://github.com/marl/autopool) to aggregate frame level predictions.  The model takes in as input:
- * Audio content, via OpenL3 embeddings (`content_type="env"`, `input_repr="mel256"`, and `embedding_size=512`), using a window size and hop size of 1.0 second, giving us ten 512-dimensional embeddings for each clip in our dataset.
+ * Audio content, via OpenL3 embeddings (`content_type="env"`, `input_repr="mel256"`, and `embedding_size=512`), using a window size and hop size of 1.0 second (with centered windows), giving us 11 512-dimensional embeddings for each clip in our dataset.
  * Spatial context, via latitude and longitude values, giving us 2 values for each clip in our dataset.
  * Temporal context, via hour of the day, day of the week, and week of the year, each encoded as a one hot vector, giving us 24 + 7 + 52 = 83 values for each clip in our dataset.
  
