@@ -173,9 +173,10 @@ def softmax(X, theta=1.0, axis=None):
 
 
 def construct_mlp(num_frames, input_size, num_classes,
-                  hidden_layer_size=128, num_hidden_layers=0, l2_reg=1e-5):
+                  hidden_layer_size=128, num_hidden_layers=1, l2_reg=1e-5):
     """
-    Construct a 2-hidden-layer MLP model for MIL processing
+    Construct a MLP model for urban sound tagging.
+
     Parameters
     ----------
     num_frames
@@ -367,7 +368,7 @@ def train_model(model, X_train, y_train, X_valid, y_valid, output_dir,
 def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
           label_mode="fine", batch_size=64, num_epochs=100,
           patience=20, learning_rate=1e-4, hidden_layer_size=128,
-          num_hidden_layers=0, l2_reg=1e-5, standardize=True,
+          num_hidden_layers=1, l2_reg=1e-5, standardize=True,
           timestamp=None, random_state=0):
     """
     Train and evaluate a MIL MLP model.
@@ -632,7 +633,7 @@ if __name__ == '__main__':
     parser.add_argument("exp_id", type=str)
 
     parser.add_argument("--hidden_layer_size", type=int, default=128)
-    parser.add_argument("--num_hidden_layers", type=int, default=0)
+    parser.add_argument("--num_hidden_layers", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--l2_reg", type=float, default=1e-5)
     parser.add_argument("--batch_size", type=int, default=64)
