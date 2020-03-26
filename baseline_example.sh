@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Activate environment
-source activate sonyc-ust
+source activate sonyc-ust-stc
 
 # Extract embeddings
 openl3 audio $SONYC_UST_PATH/data/audio --output-dir $SONYC_UST_PATH/embeddings --input-repr mel256 --content-type env --audio-embedding-size 512 --audio-hop-size 1.0 --audio-batch-size 16
