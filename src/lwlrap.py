@@ -108,6 +108,9 @@ def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode):
         tag_name_list = []
         for coarse_id, fine_dict in yaml_dict["fine"].items():
             for fine_id, fine_name in fine_dict.keys():
+                # Ignore "unknown" tags
+                if str(fine_id) == 'X':
+                    continue
                 coarse_fine_id = "{}-{}".format(coarse_id, fine_id)
                 tag_id_list.append(coarse_fine_id)
                 tag_name_list.append(fine_name)
