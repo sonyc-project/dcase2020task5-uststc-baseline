@@ -73,6 +73,7 @@ def get_subset_split(annotation_data):
 
     train_idxs = []
     valid_idxs = []
+    test_idxs = []
 
     for idx, (_, row) in enumerate(data.iterrows()):
         if row['split'] == 'train':
@@ -80,8 +81,11 @@ def get_subset_split(annotation_data):
         elif row['split'] == 'validate' and row['annotator_id'] <= 0:
             # For validation examples, only use verified annotations
             valid_idxs.append(idx)
+        elif row['split'] == 'test' and row['annotator_id'] <= 0:
+            # For validation examples, only use verified annotations
+            test_idxs.append(idx)
 
-    return np.array(train_idxs), np.array(valid_idxs)
+    return np.array(train_idxs), np.array(valid_idxs), np.array(test_idxs)
 
 
 def get_file_targets(annotation_data, labels):
@@ -227,7 +231,7 @@ def one_hot(idx, num_items):
     return [(0.0 if n != idx else 1.0) for n in range(num_items)]
 
 
-def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
+def prepare_data(train_file_idxs, valid_file_idxs, test_file_idxs, embeddings,
                  latitude_list, longitude_list, week_list, day_list, hour_list,
                  target_list, standardize=True):
     """
@@ -236,6 +240,7 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
     ----------
     train_file_idxs
     valid_file_idxs
+    test_file_idxs
     latitude_list
     longitude_list
     week_list
@@ -255,6 +260,7 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
 
     X_train_emb = np.array([embeddings[idx] for idx in train_file_idxs])
     X_valid_emb = np.array([embeddings[idx] for idx in valid_file_idxs])
+    X_test_emb = np.array([embeddings[idx] for idx in test_file_idxs])
 
     num_frames = X_train_emb.shape[1]
 
@@ -264,6 +270,9 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
     X_valid_loc = np.array([[[latitude_list[idx],
                              longitude_list[idx]]] * num_frames
                             for idx in valid_file_idxs])
+    X_test_loc = np.array([[[latitude_list[idx],
+                             longitude_list[idx]]] * num_frames
+                            for idx in test_file_idxs])
 
     X_train_time = np.array([
         [one_hot(week_list[idx] - 1, NUM_WEEKS) \
@@ -275,12 +284,19 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
          + one_hot(day_list[idx], NUM_DAYS) \
          + one_hot(hour_list[idx], NUM_HOURS)] * num_frames
         for idx in valid_file_idxs])
+    X_test_time = np.array([
+        [one_hot(week_list[idx] - 1, NUM_WEEKS) \
+         + one_hot(day_list[idx], NUM_DAYS) \
+         + one_hot(hour_list[idx], NUM_HOURS)] * num_frames
+        for idx in test_file_idxs])
 
     X_train_cts = np.concatenate((X_train_emb, X_train_loc), axis=-1)
     X_valid_cts = np.concatenate((X_valid_emb, X_valid_loc), axis=-1)
+    X_test_cts = np.concatenate((X_test_emb, X_test_loc), axis=-1)
 
     y_train = np.array([target_list[idx] for idx in train_file_idxs])
     y_valid = np.array([target_list[idx] for idx in valid_file_idxs])
+    y_test = np.array([target_list[idx] for idx in test_file_idxs])
 
     if standardize:
         # Only standardize continuous valued inputs (embeddings + location)
@@ -289,19 +305,21 @@ def prepare_data(train_file_idxs, valid_file_idxs, embeddings,
 
         X_train_cts = np.array([scaler.transform(emb_grp) for emb_grp in X_train_cts])
         X_valid_cts = np.array([scaler.transform(emb_grp) for emb_grp in X_valid_cts])
+        X_test_cts = np.array([scaler.transform(emb_grp) for emb_grp in X_test_cts])
     else:
         scaler = None
 
     # Concatenate all of the inputs
     X_train = np.concatenate((X_train_cts, X_train_time), axis=-1)
     X_valid = np.concatenate((X_valid_cts, X_valid_time), axis=-1)
+    X_test = np.concatenate((X_test_cts, X_test_time), axis=-1)
 
     # Shuffle the training set
     train_idxs = np.random.permutation(len(X_train))
     X_train = np.array(X_train)[train_idxs]
     y_train = np.array(y_train)[train_idxs]
 
-    return X_train, y_train, X_valid, y_valid, scaler
+    return X_train, y_train, X_valid, y_valid, X_test, y_test, scaler
 
 
 ## GENERIC MODEL TRAINING
@@ -355,6 +373,7 @@ def train_model(model, X_train, y_train, X_valid, y_valid, output_dir,
 
     # Fit model
     model.compile(Adam(lr=learning_rate), loss=loss)
+    print(model.summary())
     history = model.fit(
         x=X_train, y=y_train, batch_size=batch_size, epochs=num_epochs,
         validation_data=(X_valid, y_valid), callbacks=cb, verbose=2)
@@ -426,7 +445,7 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
     # For fine, we include incomplete labels in targets for computing the loss
     fine_target_list = get_file_targets(annotation_data, full_fine_target_labels)
     coarse_target_list = get_file_targets(annotation_data, coarse_target_labels)
-    train_file_idxs, valid_file_idxs = get_subset_split(annotation_data)
+    train_file_idxs, valid_file_idxs, test_file_idxs = get_subset_split(annotation_data)
 
     if label_mode == "fine":
         target_list = fine_target_list
@@ -441,8 +460,8 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
 
     embeddings = load_embeddings(file_list, emb_dir)
 
-    X_train, y_train, X_valid, y_valid, scaler \
-        = prepare_data(train_file_idxs, valid_file_idxs, embeddings,
+    X_train, y_train, X_valid, y_valid, X_test, y_test, scaler\
+        = prepare_data(train_file_idxs, valid_file_idxs, test_file_idxs, embeddings,
                        latitude_list, longitude_list,
                        week_list, day_list, hour_list,
                        target_list, standardize=standardize)
@@ -538,17 +557,21 @@ def train(annotation_path, taxonomy_path, emb_dir, output_dir, exp_id,
     results = {}
     results['train'] = model.predict(X_train).tolist()
     results['validate'] = model.predict(X_valid).tolist()
+    results['test'] = model.predict(X_test).tolist()
     results['train_history'] = history.history
 
     results_path = os.path.join(results_dir, "results.json")
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    generate_output_file(results['validate'], valid_file_idxs, results_dir,
+    generate_output_file('validate_output.csv', results['validate'], valid_file_idxs, results_dir,
+                         file_list, label_mode, taxonomy)
+
+    generate_output_file('test_output.csv', results['test'], test_file_idxs, results_dir,
                          file_list, label_mode, taxonomy)
 
 
-def generate_output_file(y_pred, file_idxs, results_dir, file_list, label_mode, taxonomy):
+def generate_output_file(filename, y_pred, file_idxs, results_dir, file_list, label_mode, taxonomy):
     """
     Write the output file containing model predictions
 
@@ -565,7 +588,7 @@ def generate_output_file(y_pred, file_idxs, results_dir, file_list, label_mode, 
     -------
 
     """
-    output_path = os.path.join(results_dir, "output.csv")
+    output_path = os.path.join(results_dir, filename)
     file_list = [file_list[idx] for idx in file_idxs]
 
     coarse_fine_labels = [["{}-{}_{}".format(coarse_id, fine_id, fine_label)
