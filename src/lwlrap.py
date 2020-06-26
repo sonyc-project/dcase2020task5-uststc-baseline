@@ -109,7 +109,7 @@ def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode,
         tag_id_list = []
         tag_name_list = []
         for coarse_id, fine_dict in yaml_dict["fine"].items():
-            for fine_id, fine_name in fine_dict.keys():
+            for fine_id, fine_name in fine_dict.items():
                 # Ignore "unknown" tags
                 if str(fine_id) == 'X':
                     continue
@@ -118,8 +118,8 @@ def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode,
                 tag_name_list.append(fine_name)
     elif mode == "coarse":
         pred_df = parse_coarse_prediction(prediction_path, yaml_path)
-        tag_id_list, tag_name_list = zip(*yaml_dict["coarse"].items())
-        tag_id_list, tag_name_list = list(tag_id_list), list(tag_name_list)
+        tag_id_list, tag_name_list = map(list, zip(*yaml_dict["coarse"].items()))
+        tag_id_list = list(map(str, tag_id_list))
 
     # Convert dataframes into numpy arrays
     truth = gt_df[tag_id_list].to_numpy()

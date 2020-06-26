@@ -7,7 +7,7 @@ import pandas as pd
 def _disambiguate_sonyc_team_annotations(series):
     """Helper function used for DataFrame aggregation to disambiguate
     individual SONYC team annotations"""
-    return int(np.logical_and.reduce(series[series >= 0]))
+    return int(np.logical_and.reduce(series[series >= 0].to_numpy().astype(bool)))
 
 
 def parse_ground_truth(annotation_path, yaml_path,

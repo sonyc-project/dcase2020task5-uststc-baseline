@@ -30,8 +30,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    with open(args.yaml_path, 'r') as f:
-        taxonomy = yaml.load(f)
+    with open(args.yaml_path, 'r') as stream:
+        taxonomy = yaml.load(stream, Loader=yaml.Loader)
 
     metrics = {}
     for mode in ("fine", "coarse"):
@@ -53,9 +53,7 @@ if __name__ == '__main__':
         print(" * lwlrap:                {}".format(metrics[mode]["lwlrap"]))
         print(" * Per-Tag lwlrap:")
         for tag_name, lwlrap in metrics[mode]["class_lwlrap"].items():
-            weight = metrics[mode]["class_lwlrap_weight"]
             print("      - {}: {}".format(tag_name, lwlrap))
-            print("        (Weight: {})".format(weight))
 
     prediction_fname = os.path.splitext(os.path.basename(args.prediction_path))[0]
     eval_fname = "evaluation_{}.json".format(prediction_fname)
