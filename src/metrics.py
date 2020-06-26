@@ -2,7 +2,9 @@ import numpy as np
 import oyaml as yaml
 import pandas as pd
 from sklearn.metrics import auc, confusion_matrix
-import warnings
+from annotations import parse_ground_truth, parse_fine_prediction, \
+    parse_coarse_prediction
+from lwlrap import calculate_lwlrap_metrics
 
 
 def confusion_matrix_fine(
@@ -130,7 +132,7 @@ def confusion_matrix_fine(
     # truly present. Conversely, it is set equal to 0 if any of the complete
     # fine tags is truly present, or if the incomplete fine tag is truly absent.
     # The result is a (N,) vector.
-    y_true_coarsened_without_incomplete =\
+    y_true_coarsened_without_incomplete = \
         np.logical_and.reduce(np.logical_not(Y_true), axis=1)
     y_true_coarsened = np.logical_and(
         y_true_coarsened_without_incomplete, is_true_incomplete)
@@ -228,7 +230,122 @@ def confusion_matrix_coarse(y_true, y_pred):
     return TP, FP, FN
 
 
-def evaluate(prediction_path, annotation_path, yaml_path, mode):
+def micro_averaged_auprc(df_dict, return_df=False):
+    """
+    Compute micro-averaged area under the precision-recall curve (AUPRC)
+    from a dictionary of class-wise DataFrames obtained via `evaluate`.
+    """
+    # List all unique values of thresholds across coarse categories.
+    thresholds = np.unique(
+        np.hstack([x["threshold"] for x in df_dict.values()]))
+
+    # Count number of unique thresholds.
+    n_thresholds = len(thresholds)
+
+    # Initialize arrays for TP, FP, and FN
+    TPs = np.zeros((n_thresholds,)).astype('int')
+    FPs = np.zeros((n_thresholds,)).astype('int')
+    FNs = np.zeros((n_thresholds,)).astype('int')
+
+    # Loop over thresholds.
+    for i, threshold in enumerate(thresholds):
+
+        # Initialize counters of TP, FP, and FN across all categories.
+        global_TP, global_FP, global_FN = 0, 0, 0
+
+        # Loop over coarse categories.
+        for coarse_id in df_dict.keys():
+
+            # Find last row above threshold.
+            coarse_df = df_dict[coarse_id]
+            coarse_thresholds = coarse_df["threshold"]
+            row = coarse_df[coarse_thresholds>=threshold].iloc[-1]
+
+            # Increment TP, FP, and FN.
+            global_TP += row["TP"]
+            global_FP += row["FP"]
+            global_FN += row["FN"]
+
+        # Store micro-averaged values of TP, FP, and FN for the given threshold.
+        TPs[i] = global_TP
+        FPs[i] = global_FP
+        FNs[i] = global_FN
+
+    # Build DataFrame from columns.
+    eval_df = pd.DataFrame({
+        "threshold": thresholds, "TP": TPs, "FP": FPs, "FN": FNs})
+
+    # Add columns for precision, recall, and F1-score.
+    # NB: we take the maximum between TPs+FPs and mu = 0.5 in the
+    # denominator in order to avoid division by zero.
+    # This only ever happens if TP+FP < 1, which
+    # implies TP = 0 (because TP and FP are nonnegative integers),
+    # and therefore a numerator of exactly zero. Therefore, any additive
+    # offset mu would do as long as 0 < mu < 1. Choosing mu = 0.5 is
+    # purely arbitrary and has no effect on the outcome (i.e. zero).
+    mu = 0.5
+    eval_df["P"] = TPs / np.maximum(TPs + FPs, mu)
+
+    # Likewise for recalls, although this numerical safeguard is probably
+    # less necessary given that TP+FN=0 implies that there are zero
+    # positives in the ground truth, which is unlikely but no unheard of.
+    eval_df["R"] = TPs / np.maximum(TPs + FNs, mu)
+
+    # Sort PR curve by ascending recall.
+    sorting_indices = np.argsort(list(eval_df["R"]))
+    recalls = np.array([0.0] + list(eval_df["R"][sorting_indices]) + [1.0])
+    precisions = np.array([1.0] + list(eval_df["P"][sorting_indices]) + [0.0])
+    auprc = auc(recalls, precisions)
+
+    # If the DataFrame containing the full P-R curve is requested.
+    if return_df:
+        # Compute F1-scores.
+        # NB: we use the harmonic mean formula (2/F = 1/P + 1/R) rather than
+        # the more common F = (2*P*R)/(P+R) in order circumvent the edge case
+        # where both P and R are equal to 0 (i.e. TP = 0).
+        eval_df["F"] = 2 / (1/eval_df["P"] + 1/eval_df["R"])
+
+        # Return
+        return auprc, eval_df
+    else:
+        # Otherwise, return only the AUPRC as a scalar.
+        return auprc
+
+
+def macro_averaged_auprc(df_dict, return_classwise=False):
+    """
+    Compute macro-averaged area under the precision-recall curve (AUPRC)
+    from a dictionary of class-wise DataFrames obtaines via `evaluate`.
+    """
+    # Initialize list of category-wise AUPRCs.
+    auprcs = []
+    coarse_id_list = df_dict.keys()
+
+    # Loop over coarse categories.
+    for coarse_id in coarse_id_list:
+        # Load precisions and recalls.
+        # NB: we prepend a (1,0) and append a (0,1) to the curve so that the
+        # curve reaches the top-left and bottom-right quadrants of the
+        # precision-recall square.
+        sorting_indices = df_dict[coarse_id]["R"].argsort()
+        recalls = np.array(
+            [0.0] + list(df_dict[coarse_id]["R"][sorting_indices]) + [1.0])
+        precisions = np.array(
+            [1.0] + list(df_dict[coarse_id]["P"][sorting_indices]) + [0.0])
+        auprcs.append(auc(recalls, precisions))
+
+    # Average AUPRCs across coarse categories with uniform weighting.
+    mean_auprc = np.mean(auprcs)
+
+    if return_classwise:
+        class_auprc = {coarse_id: auprc
+                       for coarse_id, auprc in zip(coarse_id_list, auprcs)}
+        return mean_auprc, class_auprc
+    else:
+        return mean_auprc
+
+
+def calculate_base_classification_metrics(prediction_path, annotation_path, yaml_path, mode):
     # Set minimum threshold.
     min_threshold = 0.01
 
@@ -383,324 +500,43 @@ def evaluate(prediction_path, annotation_path, yaml_path, mode):
     return df_dict
 
 
-def micro_averaged_auprc(df_dict, return_df=False):
-    """
-    Compute micro-averaged area under the precision-recall curve (AUPRC)
-    from a dictionary of class-wise DataFrames obtained via `evaluate`.
-    """
-    # List all unique values of thresholds across coarse categories.
-    thresholds = np.unique(
-        np.hstack([x["threshold"] for x in df_dict.values()]))
-
-    # Count number of unique thresholds.
-    n_thresholds = len(thresholds)
-
-    # Initialize arrays for TP, FP, and FN
-    TPs = np.zeros((n_thresholds,)).astype('int')
-    FPs = np.zeros((n_thresholds,)).astype('int')
-    FNs = np.zeros((n_thresholds,)).astype('int')
-
-    # Loop over thresholds.
-    for i, threshold in enumerate(thresholds):
-
-        # Initialize counters of TP, FP, and FN across all categories.
-        global_TP, global_FP, global_FN = 0, 0, 0
-
-        # Loop over coarse categories.
-        for coarse_id in df_dict.keys():
-
-            # Find last row above threshold.
-            coarse_df = df_dict[coarse_id]
-            coarse_thresholds = coarse_df["threshold"]
-            row = coarse_df[coarse_thresholds>=threshold].iloc[-1]
-
-            # Increment TP, FP, and FN.
-            global_TP += row["TP"]
-            global_FP += row["FP"]
-            global_FN += row["FN"]
-
-        # Store micro-averaged values of TP, FP, and FN for the given threshold.
-        TPs[i] = global_TP
-        FPs[i] = global_FP
-        FNs[i] = global_FN
-
-    # Build DataFrame from columns.
-    eval_df = pd.DataFrame({
-        "threshold": thresholds, "TP": TPs, "FP": FPs, "FN": FNs})
-
-    # Add columns for precision, recall, and F1-score.
-    # NB: we take the maximum between TPs+FPs and mu = 0.5 in the
-    # denominator in order to avoid division by zero.
-    # This only ever happens if TP+FP < 1, which
-    # implies TP = 0 (because TP and FP are nonnegative integers),
-    # and therefore a numerator of exactly zero. Therefore, any additive
-    # offset mu would do as long as 0 < mu < 1. Choosing mu = 0.5 is
-    # purely arbitrary and has no effect on the outcome (i.e. zero).
-    mu = 0.5
-    eval_df["P"] = TPs / np.maximum(TPs + FPs, mu)
-
-    # Likewise for recalls, although this numerical safeguard is probably
-    # less necessary given that TP+FN=0 implies that there are zero
-    # positives in the ground truth, which is unlikely but no unheard of.
-    eval_df["R"] = TPs / np.maximum(TPs + FNs, mu)
-
-    # Sort PR curve by ascending recall.
-    sorting_indices = np.argsort(list(eval_df["R"]))
-    recalls = np.array([0.0] + list(eval_df["R"][sorting_indices]) + [1.0])
-    precisions = np.array([1.0] + list(eval_df["P"][sorting_indices]) + [0.0])
-    auprc = auc(recalls, precisions)
-
-    # If the DataFrame containing the full P-R curve is requested.
-    if return_df:
-        # Compute F1-scores.
-        # NB: we use the harmonic mean formula (2/F = 1/P + 1/R) rather than
-        # the more common F = (2*P*R)/(P+R) in order circumvent the edge case
-        # where both P and R are equal to 0 (i.e. TP = 0).
-        eval_df["F"] = 2 / (1/eval_df["P"] + 1/eval_df["R"])
-
-        # Return
-        return auprc, eval_df
-    else:
-        # Otherwise, return only the AUPRC as a scalar.
-        return auprc
-
-
-
-def macro_averaged_auprc(df_dict, return_classwise=False):
-    """
-    Compute macro-averaged area under the precision-recall curve (AUPRC)
-    from a dictionary of class-wise DataFrames obtaines via `evaluate`.
-    """
-    # Initialize list of category-wise AUPRCs.
-    auprcs = []
-    coarse_id_list = df_dict.keys()
-
-    # Loop over coarse categories.
-    for coarse_id in coarse_id_list:
-        # Load precisions and recalls.
-        # NB: we prepend a (1,0) and append a (0,1) to the curve so that the
-        # curve reaches the top-left and bottom-right quadrants of the
-        # precision-recall square.
-        sorting_indices = df_dict[coarse_id]["R"].argsort()
-        recalls = np.array(
-            [0.0] + list(df_dict[coarse_id]["R"][sorting_indices]) + [1.0])
-        precisions = np.array(
-            [1.0] + list(df_dict[coarse_id]["P"][sorting_indices]) + [0.0])
-        auprcs.append(auc(recalls, precisions))
-
-    # Average AUPRCs across coarse categories with uniform weighting.
-    mean_auprc = np.mean(auprcs)
-
-    if return_classwise:
-        class_auprc = {coarse_id: auprc
-                       for coarse_id, auprc in zip(coarse_id_list, auprcs)}
-        return mean_auprc, class_auprc
-    else:
-        return mean_auprc
-
-
-def parse_coarse_prediction(pred_csv_path, yaml_path):
-    """
-    Parse coarse-level predictions from a CSV file containing both fine-level
-    and coarse-level predictions (and possibly additional metadata).
-    Returns a Pandas DataFrame in which the column names are coarse
-    IDs of the form 1, 2, 3 etc.
-
-
-    Parameters
-    ----------
-    pred_csv_path: string
-        Path to the CSV file containing predictions.
-
-    yaml_path: string
-        Path to the YAML file containing coarse taxonomy.
-
-
-    Returns
-    -------
-    pred_coarse_df: DataFrame
-        Coarse-level complete predictions.
-    """
-
-    # Create dictionary to parse tags
+def compute_metrics(prediction_path, annotation_path, yaml_path, mode):
     with open(yaml_path, 'r') as stream:
-        yaml_dict = yaml.load(stream, Loader=yaml.Loader)
+        taxonomy = yaml.load(stream, Loader=yaml.Loader)
 
-    # Collect tag names as strings and map them to coarse ID pairs.
-    rev_coarse_dict = {"_".join([str(k), yaml_dict["coarse"][k]]): k
-        for k in yaml_dict["coarse"]}
+    # Compute metrics necessary for computing AUPRC and F1-score
+    df_dict = calculate_base_classification_metrics(prediction_path,
+                                                    annotation_path,
+                                                    yaml_path,
+                                                    mode)
 
-    # Read comma-separated values with the Pandas library
-    pred_df = pd.read_csv(pred_csv_path)
+    # Compute AUPRC
+    micro_auprc, eval_df = micro_averaged_auprc(df_dict, return_df=True)
+    macro_auprc, class_auprc = macro_averaged_auprc(df_dict, return_classwise=True)
 
-    # Assign a predicted column to each coarse key, by using the tag as an
-    # intermediate hashing step.
-    pred_coarse_dict = {}
-    for c in rev_coarse_dict:
-        if c in pred_df:
-            pred_coarse_dict[str(rev_coarse_dict[c])] = pred_df[c]
-        else:
-            pred_coarse_dict[str(rev_coarse_dict[c])] = np.zeros((len(pred_df),))
-            warnings.warn("Column not found: " + c)
+    # Get index of first threshold that is at least 0.5
+    thresh_0pt5_idx = (eval_df['threshold'] >= 0.5).to_numpy().nonzero()[0][0]
 
-    # Copy over the audio filename strings corresponding to each sample.
-    pred_coarse_dict["audio_filename"] = pred_df["audio_filename"]
+    # Store AUPRC and FI score
+    metrics = {}
+    metrics["micro_auprc"] = micro_auprc
+    metrics["micro_f1"] = eval_df["F"][thresh_0pt5_idx]
+    metrics["macro_auprc"] = macro_auprc
+    metrics["class_auprc"] = {}
 
-    # Build a new Pandas DataFrame with coarse keys as column names.
-    pred_coarse_df = pd.DataFrame.from_dict(pred_coarse_dict)
+    # Store per-class AUPRC
+    for coarse_id, auprc in class_auprc.items():
+        coarse_name = taxonomy["coarse"][int(coarse_id)]
+        metrics["class_auprc"][coarse_name] = auprc
 
-    # Return output in DataFrame format.
-    # The column names are of the form 1, 2, 3, etc.
-    return pred_coarse_df.sort_values('audio_filename')
+    # Compute lwlrap
+    overall_lwlrap, class_lwlrap_dict, class_weight_dict \
+        = calculate_lwlrap_metrics(prediction_path, annotation_path,
+                                   yaml_path, mode)
 
+    # Store lwlrap metrics
+    metrics["lwlrap"] = overall_lwlrap
+    metrics["class_lwlrap"] = class_lwlrap_dict
+    metrics["class_lwlrap_weight"] = class_weight_dict
 
-def parse_fine_prediction(pred_csv_path, yaml_path):
-    """
-    Parse fine-level predictions from a CSV file containing both fine-level
-    and coarse-level predictions (and possibly additional metadata).
-    Returns a Pandas DataFrame in which the column names are mixed (coarse-fine)
-    IDs of the form 1-1, 1-2, 1-3, ..., 1-X, 2-1, 2-2, 2-3, ... 2-X, 3-1, etc.
-
-
-    Parameters
-    ----------
-    pred_csv_path: string
-        Path to the CSV file containing predictions.
-
-    yaml_path: string
-        Path to the YAML file containing fine taxonomy.
-
-
-    Returns
-    -------
-    pred_fine_df: DataFrame
-        Fine-level complete predictions.
-    """
-
-    # Create dictionary to parse tags
-    with open(yaml_path, 'r') as stream:
-        yaml_dict = yaml.load(stream, Loader=yaml.Loader)
-
-    # Collect tag names as strings and map them to mixed (coarse-fine) ID pairs.
-    # The "mixed key" is a hyphenation of the coarse ID and fine ID.
-    fine_dict = {}
-    for coarse_id in yaml_dict["fine"]:
-        for fine_id in yaml_dict["fine"][coarse_id]:
-            mixed_key = "-".join([str(coarse_id), str(fine_id)])
-            fine_dict[mixed_key] = "_".join([
-                mixed_key, yaml_dict["fine"][coarse_id][fine_id]])
-
-    # Invert the key-value relationship between mixed key and tag.
-    # Now, tags are the keys, and mixed keys (coarse-fine IDs) are the values.
-    # This is possible because tags are unique.
-    rev_fine_dict = {fine_dict[k]: k for k in fine_dict}
-
-    # Read comma-separated values with the Pandas library
-    pred_df = pd.read_csv(pred_csv_path)
-
-    # Assign a predicted column to each mixed key, by using the tag as an
-    # intermediate hashing step.
-    pred_fine_dict = {}
-    for f in sorted(rev_fine_dict.keys()):
-        if f in pred_df:
-            pred_fine_dict[rev_fine_dict[f]] = pred_df[f]
-        else:
-            pred_fine_dict[rev_fine_dict[f]] = np.zeros((len(pred_df),))
-            warnings.warn("Column not found: " + f)
-
-    # Loop over coarse tags.
-    n_samples = len(pred_df)
-    coarse_dict = yaml_dict["coarse"]
-    for coarse_id in yaml_dict["coarse"]:
-        # Construct incomplete fine tag by appending -X to the coarse tag.
-        incomplete_tag = str(coarse_id) + "-X"
-
-        # If the incomplete tag is not in the prediction, append a column of zeros.
-        # This is the case e.g. for coarse ID 7 ("dogs") which has a single
-        # fine-level tag ("7-1_dog-barking-whining") and thus no incomplete
-        # tag 7-X.
-        if incomplete_tag not in fine_dict.keys():
-            pred_fine_dict[incomplete_tag] =\
-                np.zeros((n_samples,)).astype('int')
-
-
-    # Copy over the audio filename strings corresponding to each sample.
-    pred_fine_dict["audio_filename"] = pred_df["audio_filename"]
-
-    # Build a new Pandas DataFrame with mixed keys as column names.
-    pred_fine_df = pd.DataFrame.from_dict(pred_fine_dict)
-
-    # Return output in DataFrame format.
-    # Column names are 1-1, 1-2, 1-3 ... 1-X, 2-1, 2-2, 2-3 ... 2-X, 3-1, etc.
-    return pred_fine_df.sort_values('audio_filename')
-
-
-def parse_ground_truth(annotation_path, yaml_path):
-    """
-    Parse ground truth annotations from a CSV file containing both fine-level
-    and coarse-level predictions (and possibly additional metadata).
-    Returns a Pandas DataFrame in which the column names are coarse
-    IDs of the form 1, 2, 3 etc.
-
-
-    Parameters
-    ----------
-    annotation_path: string
-        Path to the CSV file containing predictions.
-
-    yaml_path: string
-        Path to the YAML file containing coarse taxonomy.
-
-
-    Returns
-    -------
-    gt_df: DataFrame
-        Ground truth.
-    """
-    # Create dictionary to parse tags
-    with open(yaml_path, 'r') as stream:
-        yaml_dict = yaml.load(stream, Loader=yaml.Loader)
-
-    # Load CSV file into a Pandas DataFrame.
-    ann_df = pd.read_csv(annotation_path)
-
-    # Restrict to ground truth ("annotator zero").
-    gt_df = ann_df[
-        (ann_df["annotator_id"]==0) & (ann_df["split"]=="validate")]
-
-    # Rename coarse columns.
-    coarse_dict = yaml_dict["coarse"]
-    coarse_renaming = {
-        "_".join([str(c), coarse_dict[c], "presence"]): str(c)
-        for c in coarse_dict}
-    gt_df = gt_df.rename(columns=coarse_renaming)
-
-    # Collect tag names as strings and map them to mixed (coarse-fine) ID pairs.
-    # The "mixed key" is a hyphenation of the coarse ID and fine ID.
-    fine_dict = {}
-    for coarse_id in yaml_dict["fine"]:
-        for fine_id in yaml_dict["fine"][coarse_id]:
-            mixed_key = "-".join([str(coarse_id), str(fine_id)])
-            fine_dict[mixed_key] = yaml_dict["fine"][coarse_id][fine_id]
-
-    # Rename fine columns.
-    fine_renaming = {"_".join([k, fine_dict[k], "presence"]): k
-        for k in fine_dict}
-    gt_df = gt_df.rename(columns=fine_renaming)
-
-    # Loop over coarse tags.
-    n_samples = len(gt_df)
-    coarse_dict = yaml_dict["coarse"]
-    for coarse_id in yaml_dict["coarse"]:
-        # Construct incomplete fine tag by appending -X to the coarse tag.
-        incomplete_tag = str(coarse_id) + "-X"
-
-        # If the incomplete tag is not in the prediction, append a column of zeros.
-        # This is the case e.g. for coarse ID 7 ("dogs") which has a single
-        # fine-level tag ("7-1_dog-barking-whining") and thus no incomplete
-        # tag 7-X.
-        if incomplete_tag not in gt_df.columns:
-            gt_df[incomplete_tag] = np.zeros((n_samples,)).astype('int')
-
-    # Return output in DataFrame format.
-    return gt_df.sort_values('audio_filename')
+    return metrics

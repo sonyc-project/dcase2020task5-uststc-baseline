@@ -5,6 +5,9 @@ Dan Ellis's implementation for DCASE 2019 Task 2:
 https://colab.research.google.com/drive/1AgPdhSp7ttY18O3fEoHOQKlt_3HJDLi8
 """
 import numpy as np
+import oyaml as yaml
+from annotations import parse_ground_truth, parse_fine_prediction, \
+    parse_coarse_prediction
 
 
 def _one_sample_positive_class_precisions(truth, scores):
@@ -13,10 +16,10 @@ def _one_sample_positive_class_precisions(truth, scores):
 
     Parameters
     ----------
-        scores: array of float, shape = [num_classes,]
-            array of individual classifier scores.
         truth: array of bool, shape = [num_classes,]
             array of bools indicating which classes are true.
+        scores: array of float, shape = [num_classes,]
+            array of individual classifier scores.
 
     Returns
     -------
@@ -90,24 +93,40 @@ def calculate_per_class_lwlrap(truth, scores):
     return per_class_lwlrap, weight_per_class
 
 
-def calculate_overall_lwlrap(truth, scores):
-    """
-    Calculate label-weighted label-ranking average precision.
+def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode):
+    """Compute lwlrap metrics from predictions and ground truth annotations."""
+    with open(yaml_path, 'r') as stream:
+        yaml_dict = yaml.load(stream, Loader=yaml.Loader)
 
-    Parameters
-    ----------
-        truth: array of bool, shape = [num_samples, num_classes]
-            array of boolean ground-truth of presence of each class
-            for each sample.
-        scores: array of float, shape = [num_samples, num_classes]
-            array of the classifier-under-test's real-valued score
-            for each class for each sample.
+    # Parse ground truth.
+    gt_df = parse_ground_truth(annotation_path, yaml_path)
 
-    Returns
-    -------
-        overall_lwlrap: float
-            overall lwlrap.
-    """
+    # Parse predictions, tag ids, and tag names.
+    if mode == "fine":
+        pred_df = parse_fine_prediction(prediction_path, yaml_path)
+        tag_id_list = []
+        tag_name_list = []
+        for coarse_id, fine_dict in yaml_dict["fine"].items():
+            for fine_id, fine_name in fine_dict.keys():
+                coarse_fine_id = "{}-{}".format(coarse_id, fine_id)
+                tag_id_list.append(coarse_fine_id)
+                tag_name_list.append(fine_name)
+    elif mode == "coarse":
+        pred_df = parse_coarse_prediction(prediction_path, yaml_path)
+        tag_id_list, tag_name_list = zip(*yaml_dict["coarse"].items())
+        tag_id_list, tag_name_list = list(tag_id_list), list(tag_name_list)
+
+    # Convert dataframes into numpy arrays
+    truth = gt_df[tag_id_list].to_numpy()
+    scores = pred_df[tag_id_list].to_numpy()
+
+    # Compute lwlrap
     per_class_lwlrap, weight_per_class = calculate_per_class_lwlrap(truth, scores)
     overall_lwlrap = np.sum(per_class_lwlrap * weight_per_class)
-    return overall_lwlrap
+
+    # Store per-class information in dictionaries
+    class_lwlrap_dict = dict(zip(tag_name_list, per_class_lwlrap))
+    class_weight_dict = dict(zip(tag_name_list, weight_per_class))
+
+    return overall_lwlrap, class_lwlrap_dict, class_weight_dict
+
