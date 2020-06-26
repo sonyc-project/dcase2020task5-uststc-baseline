@@ -93,13 +93,15 @@ def calculate_per_class_lwlrap(truth, scores):
     return per_class_lwlrap, weight_per_class
 
 
-def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode):
+def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode,
+                             eval_split="validate", target_mode="verified"):
     """Compute lwlrap metrics from predictions and ground truth annotations."""
     with open(yaml_path, 'r') as stream:
         yaml_dict = yaml.load(stream, Loader=yaml.Loader)
 
     # Parse ground truth.
-    gt_df = parse_ground_truth(annotation_path, yaml_path)
+    gt_df = parse_ground_truth(annotation_path, yaml_path,
+                               eval_split=eval_split, target_mode=target_mode)
 
     # Parse predictions, tag ids, and tag names.
     if mode == "fine":

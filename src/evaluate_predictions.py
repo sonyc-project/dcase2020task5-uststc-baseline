@@ -18,6 +18,15 @@ if __name__ == '__main__':
                         help='Path to dataset annotation CSV file.')
     parser.add_argument('yaml_path', type=str,
                         help='Path to dataset taxonomy YAML file.')
+    parser.add_argument('--eval-split', type=str, choices=["validate", "test"],
+                        default="validate",
+                        help='Split with which to evaluate model.')
+    parser.add_argument('--target-mode', type=str, choices=["verified", "sonyc_annotator_agreement"],
+                        default="verified",
+                        help="Method for determining ground truth targets from annotations."
+                             "'verified' uses the final annotations verified by the SONYC team"
+                             "after disagreement resolution. 'sonyc_annotator_agreement' produces"
+                             "positives only if both SONYC annotators agree on the presence of a tag.")
 
     args = parser.parse_args()
 
@@ -29,7 +38,9 @@ if __name__ == '__main__':
         metrics[mode] = compute_metrics(args.prediction_path,
                                         args.annotation_path,
                                         args.yaml_path,
-                                        mode)
+                                        mode,
+                                        eval_split=args.eval_split,
+                                        target_mode=args.target_mode)
 
         print("{} level evaluation:".format(mode.capitalize()))
         print("======================")

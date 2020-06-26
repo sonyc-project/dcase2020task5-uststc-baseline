@@ -4,7 +4,14 @@ import oyaml as yaml
 import pandas as pd
 
 
-def parse_ground_truth(annotation_path, yaml_path):
+def _disambiguate_sonyc_team_annotations(series):
+    """Helper function used for DataFrame aggregation to disambiguate
+    individual SONYC team annotations"""
+    return int(np.logical_and.reduce(series[series >= 0]))
+
+
+def parse_ground_truth(annotation_path, yaml_path,
+                       eval_split="validate", target_mode='verified'):
     """
     Parse ground truth annotations from a CSV file containing both fine-level
     and coarse-level predictions (and possibly additional metadata).
@@ -20,6 +27,15 @@ def parse_ground_truth(annotation_path, yaml_path):
     yaml_path: string
         Path to the YAML file containing coarse taxonomy.
 
+    eval_split: string
+        The name of the split used for evaluation. Can be "validate" or "test".
+
+    target_mode: string
+        Method for determining ground truth targets from annotations.
+        "verified" uses the final annotations verified by the SONYC team
+        after disagreement resolution. "sonyc_annotator_agreement" produces
+        positives only if both SONYC annotators agree on the presence of a tag.
+
 
     Returns
     -------
@@ -33,9 +49,34 @@ def parse_ground_truth(annotation_path, yaml_path):
     # Load CSV file into a Pandas DataFrame.
     ann_df = pd.read_csv(annotation_path)
 
-    # Restrict to ground truth ("annotator zero").
-    gt_df = ann_df[
-        (ann_df["annotator_id"]==0) & (ann_df["split"]=="validate")]
+    if target_mode == "verified":
+        # Restrict to ground truth ("annotator zero").
+        gt_df = ann_df[
+            (ann_df["annotator_id"]==0) & (ann_df["split"]==eval_split)]
+    elif target_mode == "sonyc_annotator_agreement":
+        # Here we take the ground truth targets to be the logical AND
+        # of the SONYC team annotators (before disagreement resolution)
+        gt_df = ann_df[
+            (ann_df["annotator_id"]<0) & (ann_df["split"]==eval_split)]
+
+        presence_keys = [k for k in ann_df.keys() if "_presence" in k]
+        non_presence_keys = [k for k in ann_df.keys() if
+                             "_presence" not in k
+                             and k != "audio_filename"
+                             and k != "annotator_id"]
+
+        # Aggregated annotator ID is arbitrarily 0
+        agg_dict = {'annotator_id': (lambda x: 0)}
+        # Non-presence columns will simply take the first value
+        agg_dict.update({k: (lambda x: x.iloc[0]) for k in non_presence_keys})
+        # Disambiguate SONYC team annotations of tag presence
+        agg_dict.update({k: _disambiguate_sonyc_team_annotations for k in presence_keys})
+
+        # Group by audio filename and aggregate
+        gt_df = gt_df.groupby("audio_filename", as_index=False).agg(agg_dict)
+
+    else:
+        raise ValueError('Invalid target mode: {}'.format(target_mode))
 
     # Rename coarse columns.
     coarse_dict = yaml_dict["coarse"]

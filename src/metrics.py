@@ -345,7 +345,10 @@ def macro_averaged_auprc(df_dict, return_classwise=False):
         return mean_auprc
 
 
-def calculate_base_classification_metrics(prediction_path, annotation_path, yaml_path, mode):
+def calculate_base_classification_metrics(prediction_path, annotation_path,
+                                          yaml_path, mode, eval_split="validate",
+                                          target_mode="verified"):
+    """Calculate base metrics used for computing AUPRC and F1-score"""
     # Set minimum threshold.
     min_threshold = 0.01
 
@@ -354,7 +357,8 @@ def calculate_base_classification_metrics(prediction_path, annotation_path, yaml
         yaml_dict = yaml.load(stream, Loader=yaml.Loader)
 
     # Parse ground truth.
-    gt_df = parse_ground_truth(annotation_path, yaml_path)
+    gt_df = parse_ground_truth(annotation_path, yaml_path,
+                               eval_split=eval_split, target_mode=target_mode)
 
     # Parse predictions.
     if mode == "fine":
@@ -500,7 +504,8 @@ def calculate_base_classification_metrics(prediction_path, annotation_path, yaml
     return df_dict
 
 
-def compute_metrics(prediction_path, annotation_path, yaml_path, mode):
+def compute_metrics(prediction_path, annotation_path, yaml_path, mode,
+                    eval_split="validate", target_mode="verified"):
     with open(yaml_path, 'r') as stream:
         taxonomy = yaml.load(stream, Loader=yaml.Loader)
 
@@ -508,7 +513,9 @@ def compute_metrics(prediction_path, annotation_path, yaml_path, mode):
     df_dict = calculate_base_classification_metrics(prediction_path,
                                                     annotation_path,
                                                     yaml_path,
-                                                    mode)
+                                                    mode,
+                                                    eval_split=eval_split,
+                                                    target_mode=target_mode)
 
     # Compute AUPRC
     micro_auprc, eval_df = micro_averaged_auprc(df_dict, return_df=True)
@@ -532,7 +539,8 @@ def compute_metrics(prediction_path, annotation_path, yaml_path, mode):
     # Compute lwlrap
     overall_lwlrap, class_lwlrap_dict, class_weight_dict \
         = calculate_lwlrap_metrics(prediction_path, annotation_path,
-                                   yaml_path, mode)
+                                   yaml_path, mode, eval_split=eval_split,
+                                   target_mode=target_mode)
 
     # Store lwlrap metrics
     metrics["lwlrap"] = overall_lwlrap
