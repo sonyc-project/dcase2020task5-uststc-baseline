@@ -121,6 +121,12 @@ def calculate_lwlrap_metrics(prediction_path, annotation_path, yaml_path, mode,
         tag_id_list, tag_name_list = map(list, zip(*yaml_dict["coarse"].items()))
         tag_id_list = list(map(str, tag_id_list))
 
+
+    gt_filenames = set(gt_df['audio_filename'].tolist())
+    pred_filenames = set(pred_df['audio_filename'].tolist())
+    if len(pred_filenames - gt_filenames) > 0:
+        print('Remove {} missing GT files from predictions'.format(len(pred_filenames - gt_filenames)))
+        pred_df = pred_df[pred_df['audio_filename'].isin(gt_filenames)]
     # Convert dataframes into numpy arrays
     truth = gt_df[tag_id_list].to_numpy()
     scores = pred_df[tag_id_list].to_numpy()

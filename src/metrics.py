@@ -376,7 +376,10 @@ def calculate_base_classification_metrics(prediction_path, annotation_path,
         err_msg =\
             "File mismatch between ground truth and prediction table.\n\n" \
             "Missing files: {}\n\n Extra files: {}"
-        raise ValueError(err_msg.format(list(missing_files), list(extra_files)))
+        if len(extra_files) != 0:
+            pred_df = pred_df[pred_df['audio_filename'].isin(true_audio_set)]
+        if len(missing_files) != 0:
+            raise ValueError(err_msg.format(list(missing_files), list(extra_files)))
 
     # Make sure the size of the tables match
     if not (len(gt_df) == len(pred_df)):
