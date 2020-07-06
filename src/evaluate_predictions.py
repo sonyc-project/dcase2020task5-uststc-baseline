@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 import oyaml as yaml
-from metrics import evaluate, micro_averaged_auprc, macro_averaged_auprc
+from metrics import compute_metrics
 
 
 if __name__ == '__main__':
@@ -18,31 +18,29 @@ if __name__ == '__main__':
                         help='Path to dataset annotation CSV file.')
     parser.add_argument('yaml_path', type=str,
                         help='Path to dataset taxonomy YAML file.')
+    parser.add_argument('--eval-split', type=str, choices=["validate", "test"],
+                        default="validate",
+                        help='Split with which to evaluate model.')
+    parser.add_argument('--target-mode', type=str, choices=["verified", "sonyc_annotator_agreement"],
+                        default="verified",
+                        help="Method for determining ground truth targets from annotations."
+                             "'verified' uses the final annotations verified by the SONYC team"
+                             "after disagreement resolution. 'sonyc_annotator_agreement' produces"
+                             "positives only if both SONYC annotators agree on the presence of a tag.")
 
     args = parser.parse_args()
 
-    with open(args.yaml_path, 'r') as f:
-        taxonomy = yaml.load(f)
+    with open(args.yaml_path, 'r') as stream:
+        taxonomy = yaml.load(stream, Loader=yaml.Loader)
 
     metrics = {}
     for mode in ("fine", "coarse"):
-        metrics[mode] = {}
-
-        df_dict = evaluate(args.prediction_path,
-                           args.annotation_path,
-                           args.yaml_path,
-                           mode)
-
-        micro_auprc, eval_df = micro_averaged_auprc(df_dict, return_df=True)
-        macro_auprc, class_auprc = macro_averaged_auprc(df_dict, return_classwise=True)
-
-        # Get index of first threshold that is at least 0.5
-        thresh_0pt5_idx = (eval_df['threshold'] >= 0.5).to_numpy().nonzero()[0][0]
-
-        metrics[mode]["micro_auprc"] = micro_auprc
-        metrics[mode]["micro_f1"] = eval_df["F"][thresh_0pt5_idx]
-        metrics[mode]["macro_auprc"] = macro_auprc
-        metrics[mode]["class_auprc"] = {}
+        metrics[mode] = compute_metrics(args.prediction_path,
+                                        args.annotation_path,
+                                        args.yaml_path,
+                                        mode,
+                                        eval_split=args.eval_split,
+                                        target_mode=args.target_mode)
 
         print("{} level evaluation:".format(mode.capitalize()))
         print("======================")
@@ -50,17 +48,16 @@ if __name__ == '__main__':
         print(" * Micro F1-score (@0.5): {}".format(metrics[mode]["micro_f1"]))
         print(" * Macro AUPRC:           {}".format(metrics[mode]["macro_auprc"]))
         print(" * Coarse Tag AUPRC:")
-
-        for coarse_id, auprc in class_auprc.items():
-            coarse_name = taxonomy["coarse"][int(coarse_id)]
-            metrics[mode]["class_auprc"][coarse_name] = auprc
+        for coarse_name, auprc in metrics[mode]["class_auprc"].items():
             print("      - {}: {}".format(coarse_name, auprc))
+        print(" * lwlrap:                {}".format(metrics[mode]["lwlrap"]))
+        print(" * Per-Tag lwlrap:")
+        for tag_name, lwlrap in metrics[mode]["class_lwlrap"].items():
+            print("      - {}: {}".format(tag_name, lwlrap))
 
-        prediction_fname = \
-        os.path.splitext(os.path.basename(args.prediction_path))[0]
-        eval_fname = "evaluation_{}.json".format(prediction_fname)
-        eval_path = os.path.join(os.path.dirname(args.prediction_path),
-                                 eval_fname)
-        with open(eval_path, 'w') as f:
-            json.dump(metrics, f)
+    prediction_fname = os.path.splitext(os.path.basename(args.prediction_path))[0]
+    eval_fname = "evaluation_{}.json".format(prediction_fname)
+    eval_path = os.path.join(os.path.dirname(args.prediction_path), eval_fname)
+    with open(eval_path, 'w') as f:
+        json.dump(metrics, f)
 
