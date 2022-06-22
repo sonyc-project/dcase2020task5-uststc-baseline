@@ -1,5 +1,5 @@
 openl3==0.3.1
-numpy==1.18.1
+numpy==1.22.0
 keras==2.2.5
 tensorflow==1.13.2
 scikit-learn==0.22.2
